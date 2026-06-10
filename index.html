@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Breath Tracker</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body {
+    background:#0a1628;
+    color:#e0eaff;
+    font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;
+    height:100vh; overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  #header {
+    padding:12px 20px 6px;
+    display:flex; align-items:center; justify-content:space-between;
+    flex-shrink:0; z-index:10; position:relative;
+  }
+  #title { font-size:17px; font-weight:700; letter-spacing:0.5px; color:#a0c4ff; }
+  #phase-label {
+    font-size:13px; font-weight:700;
+    padding:5px 14px; border-radius:20px;
+    background:#1a2540; transition:all 0.4s ease;
+    min-width:100px; text-align:center; letter-spacing:0.5px;
+  }
+  #canvas-wrap { flex:1; position:relative; touch-action:none; overflow:hidden; }
+  canvas { display:block; width:100%; height:100%; }
+
+  /* overlay on start screen */
+  #overlay {
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    pointer-events:none; transition:opacity 0.5s;
+    background:rgba(10,22,40,0.55);
+    backdrop-filter:blur(2px);
+  }
+  #start-btn {
+    pointer-events:all;
+    background:linear-gradient(135deg,#1a4a8a,#0099bb);
+    border:2px solid rgba(160,196,255,0.3);
+    border-radius:50%; width:110px; height:110px;
+    font-size:17px; font-weight:700; color:#e0eaff;
+    cursor:pointer;
+    box-shadow:0 0 50px rgba(30,100,200,0.6), inset 0 1px 0 rgba(255,255,255,0.15);
+    transition:transform 0.12s;
+  }
+  #start-btn:active { transform:scale(0.93); }
+  #hint {
+    margin-top:20px; font-size:12px; color:#7090b0;
+    text-align:center; line-height:1.9; pointer-events:none;
+  }
+  #timer-display {
+    position:absolute; bottom:18px; left:50%; transform:translateX(-50%);
+    font-size:13px; font-weight:600; color:rgba(160,196,255,0.7);
+    letter-spacing:1px; pointer-events:none; z-index:5;
+    text-shadow:0 0 12px rgba(80,160,255,0.8);
+    min-height:18px;
+  }
+
+  /* stats */
+  #stats-panel {
+    display:none; position:absolute; inset:0;
+    background:rgba(8,14,30,0.97);
+    flex-direction:column; align-items:center;
+    justify-content:flex-start;
+    padding:24px 18px; overflow-y:auto; z-index:20;
+  }
+  #stats-panel.show { display:flex; }
+  .stats-title {
+    font-size:19px; font-weight:800; color:#a0c4ff;
+    margin-bottom:18px; letter-spacing:1.5px; text-transform:uppercase;
+  }
+  .stats-grid {
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:10px; width:100%; margin-bottom:16px;
+  }
+  .stat-card {
+    background:#0e1828; border-radius:14px;
+    padding:14px 10px; text-align:center;
+    border:1px solid #1e3050;
+  }
+  .stat-value { font-size:22px; font-weight:800; margin-bottom:3px; }
+  .stat-label { font-size:10px; color:#4a6a90; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
+  .in-color    { color:#4fc3f7; }
+  .hold-color  { color:#ffd54f; }
+  .out-color   { color:#81c784; }
+  .cycles-table {
+    width:100%; border-radius:12px; overflow:hidden;
+    border:1px solid #1e3050; margin-bottom:18px;
+  }
+  .cycles-table thead tr { background:#142035; }
+  .cycles-table th {
+    padding:9px 6px; font-size:10px; font-weight:700;
+    text-transform:uppercase; letter-spacing:0.5px; text-align:center;
+  }
+  .cycles-table td {
+    padding:8px 6px; font-size:12px; font-weight:600;
+    text-align:center; border-top:1px solid #0e1828;
+  }
+  .cycles-table tbody tr:nth-child(even) { background:#0c1622; }
+  .cycles-table tbody tr:nth-child(odd)  { background:#090f1a; }
+  #restart-btn {
+    background:linear-gradient(135deg,#1a4a8a,#0099bb);
+    border:none; border-radius:30px;
+    padding:14px 48px; font-size:16px; font-weight:700; color:#e0eaff;
+    cursor:pointer; box-shadow:0 0 30px rgba(30,100,200,0.4);
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div id="title">🌊 Breath</div>
+  <div id="phase-label">READY</div>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+  <div id="timer-display"></div>
+
+  <div id="overlay">
+    <button id="start-btn">START</button>
+    <div id="hint">
+      <b style="color:#a0c4ff">Touch</b> — drag ↑ inhale &nbsp;|&nbsp; ↓ exhale &nbsp;|&nbsp; still = hold<br>
+      <b style="color:#a0c4ff">Mouse</b> — just move up/down freely<br>
+      <span style="color:#3a5a80">Double-tap / double-click to stop</span>
+    </div>
+  </div>
+
+  <div id="stats-panel">
+    <div class="stats-title">🌊 Session Stats</div>
+    <div class="stats-grid" id="stats-grid"></div>
+    <table class="cycles-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th style="color:#4fc3f7">IN (s)</th>
+          <th style="color:#ffd54f">HOLD</th>
+          <th style="color:#81c784">OUT (s)</th>
+          <th style="color:#ff8a65">HOLD</th>
+        </tr>
+      </thead>
+      <tbody id="cycles-body"></tbody>
+    </table>
+    <button id="restart-btn">↩ New Session</button>
+  </div>
+</div>
+
+<script>
+// ─── Canvas setup ──────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const wrap   = document.getElementById('canvas-wrap');
+
+function W() { return canvas.width  / (window.devicePixelRatio||1); }
+function H() { return canvas.height / (window.devicePixelRatio||1); }
+
+function resize() {
+  const r = wrap.getBoundingClientRect();
+  const d = window.devicePixelRatio||1;
+  canvas.width  = r.width  * d;
+  canvas.height = r.height * d;
+  canvas.style.width  = r.width  + 'px';
+  canvas.style.height = r.height + 'px';
+  ctx.scale(d,d);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── State ─────────────────────────────────────────────────────────────────────
+let recording    = false;
+let currentPhase = null;   // 'in' | 'hold1' | 'out' | 'hold2'
+let phaseStart   = null;
+let cycles       = [];
+let currentCycle = {in:0,hold1:0,out:0,hold2:0};
+
+// Wave animation state — shape-driven, not position-driven
+let waveTime     = 0;
+let animFrame    = null;
+
+// These are driven directly by finger movement:
+let waveEnergy   = 0;      // 0=calm, 1=full dramatic wave — driven by finger speed
+let waveDir      = 0;      // -1=down(exhale) +1=up(inhale) — drives phase travel direction
+let wavePhaseOff = 0;      // accumulates to scroll the wave shape left/right
+let fingerSpeed  = 0;      // smoothed px/s of finger movement
+let crestSharp   = 0;      // extra sharpness when moving fast (Hokusai peaks)
+
+// Input
+const MOVE_THRESHOLD    = 6;
+const HOLD_DELAY_MS     = 800;
+const HOLD_RESET_THR    = 4;
+let holdTimer     = null;
+let lastTouchY    = null;
+let lastTouchTime = null;
+let moveDirBuffer = [];
+let lastTap       = 0;
+let lastMouseY    = null;
+let mouseDirBuffer= [];
+let timerInterval = null;
+
+// Touch tracking for recording line
+let inputPoints   = [];    // { t, y01 } — time and normalised 0-1 position
+let inputStartTime= 0;
+
+// ─── Phase colors ──────────────────────────────────────────────────────────────
+function phaseColors() {
+  // returns { deep, mid, crest, foam, sky }
+  switch(currentPhase) {
+    case 'in':
+      return { deep:'#0a2060', mid:'#1040a0', crest:'#1a6abf', foam:'#c8e8ff', sky:'#0d1f3c' };
+    case 'hold1':
+      return { deep:'#0a1840', mid:'#0e2a6a', crest:'#1550a0', foam:'#d0e8ff', sky:'#0a1530' };
+    case 'out':
+      return { deep:'#060e24', mid:'#0a1a40', crest:'#0e3070', foam:'#b0d0f0', sky:'#060c1e' };
+    case 'hold2':
+      return { deep:'#060c1e', mid:'#08152e', crest:'#0c2050', foam:'#a0c0e0', sky:'#040a18' };
+    default:
+      return { deep:'#0a1a38', mid:'#0e2550', crest:'#1450a0', foam:'#c0dcf8', sky:'#080f24' };
+  }
+}
+
+// ─── Wave drawing — shape driven by breath energy ─────────────────────────────
+function drawScene(t) {
+  const w = W(), h = H();
+  const col = phaseColors();
+
+  const sky = ctx.createLinearGradient(0,0,0,h);
+  sky.addColorStop(0, col.sky);
+  sky.addColorStop(1, col.deep);
+  ctx.fillStyle = sky;
+  ctx.fillRect(0,0,w,h);
+
+  drawHorizonLines(t, w, h, col);
+
+  const baseY = h * 0.72;
+
+  drawWaveLayer(t, w, h, baseY + h*0.10, 0.45, col.deep,  1.6, 0.007);
+  drawWaveLayer(t, w, h, baseY,          1.0,  col.mid,   1.0, 0.008);
+  drawWaveLayer(t, w, h, baseY - h*0.08, 1.45, col.crest, 0.65, 0.009);
+
+  drawFoam(t, w, h, baseY - h*0.08, col.foam);
+  drawCreatures(t);
+
+  if (recording && inputPoints.length > 1) drawInputTrace(w, h);
+
+  const vig = ctx.createRadialGradient(w/2,h/2,h*0.2,w/2,h/2,h*0.9);
+  vig.addColorStop(0,'rgba(0,0,0,0)');
+  vig.addColorStop(1,'rgba(0,0,20,0.45)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0,0,w,h);
+}
+
+function drawHorizonLines(t, w, h, col) {
+  const base = h * 0.15;
+  ctx.strokeStyle = col.mid + '55';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 5; i++) {
+    const y = base + i * 7;
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += 3) {
+      const wy = y + Math.sin(x * 0.04 + t * 0.8 + i) * 2;
+      x===0 ? ctx.moveTo(x,wy) : ctx.lineTo(x,wy);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawWaveLayer(t, w, h, baseY, relAmp, color, speedMul, freq) {
+  const amp   = h * (0.04 + waveEnergy * 0.42) * relAmp;  // much taller
+  const sharp = crestSharp * relAmp * 1.8;
+  const phase = wavePhaseOff * speedMul;
+
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+
+  for (let x = 0; x <= w; x += 2) {
+    const fx = x * freq;
+    const s1 = Math.sin(fx - phase) * amp;
+    // Stronger second harmonic for uneven, asymmetric Hokusai shape
+    const s2 = Math.sin(fx * 2.1 - phase * 1.5) * amp * 0.55;
+    const s3 = Math.sin(fx * 3.4 - phase * 2.1) * amp * 0.22;
+    // Very sharp crest — raised to power 4 for knife-edge peaks
+    const sc = Math.pow(Math.max(0, Math.sin(fx * 0.65 - phase * 0.75)), 4) * amp * sharp * 1.6;
+    // Steeper trough suppression — wave face is steep, back is gentle
+    const asym = Math.pow(Math.max(0, -Math.sin(fx - phase)), 2) * amp * 0.18;
+    const chop = Math.sin(fx * 5.1 + t * 2.8) * h * 0.006 * (0.3 + waveEnergy);
+    ctx.lineTo(x, baseY - s1 - s2 - s3 - sc + asym + chop);
+  }
+
+  ctx.lineTo(w, h);
+  ctx.closePath();
+
+  const grad = ctx.createLinearGradient(0, baseY - amp * 2.2, 0, h);
+  grad.addColorStop(0, color + 'ff');
+  grad.addColorStop(0.4, color + 'dd');
+  grad.addColorStop(1, color + 'aa');
+  ctx.fillStyle = grad;
+  ctx.fill();
+}
+
+function drawCurl(t, w, h, baseY, foamColor, crestColor) {
+  // Iconic curling wave — positioned at ~60-80% width, animated slowly
+  const cx  = w * (0.62 + Math.sin(t * 0.12) * 0.04);
+  const anim = t * 0.5;
+  const freq = (2 * Math.PI) / w;
+
+  // Find the crest point at cx
+  const swell   = Math.sin(cx * freq - anim) * h * 0.10;
+  const harmonic= Math.sin(cx * freq * 2.1 - anim * 1.3) * h * 0.04;
+  const sharp   = Math.pow(Math.max(0, Math.sin(cx * freq * 0.5 - anim * 0.7)), 3) * h * 0.06;
+  const crestTop = baseY + swell + harmonic - sharp - h * 0.04;
+
+  const curl_r = h * 0.055;
+  const curl_x = cx;
+  const curl_y = crestTop;
+
+  // Outer curl arc
+  ctx.beginPath();
+  ctx.arc(curl_x, curl_y, curl_r, Math.PI * 0.1, Math.PI * 1.25, false);
+  ctx.strokeStyle = foamColor + 'cc';
+  ctx.lineWidth   = 3;
+  ctx.stroke();
+
+  // Inner dark water of the curl
+  ctx.beginPath();
+  ctx.arc(curl_x, curl_y, curl_r * 0.6, Math.PI * 0.3, Math.PI * 1.1, false);
+  ctx.strokeStyle = crestColor + '99';
+  ctx.lineWidth   = 2;
+  ctx.stroke();
+
+  // Finger-tips of the curl
+  for (let i = 0; i < 5; i++) {
+    const angle  = Math.PI * (0.05 + i * 0.14);
+    const len    = curl_r * (0.5 + i * 0.12);
+    const tipX   = curl_x + Math.cos(angle - Math.PI*0.1) * len;
+    const tipY   = curl_y - Math.sin(angle) * len * 0.7;
+    ctx.beginPath();
+    ctx.moveTo(curl_x + Math.cos(angle)*curl_r, curl_y - Math.sin(angle)*curl_r*0.5);
+    ctx.quadraticCurveTo(
+      tipX + (i-2)*6, tipY - 8,
+      tipX + Math.cos(angle+0.4)*20, tipY + 12
+    );
+    ctx.strokeStyle = foamColor + (i<2?'dd':'88');
+    ctx.lineWidth   = 2 - i*0.2;
+    ctx.stroke();
+  }
+}
+
+function drawFoam(t, w, h, baseY, foamColor) {
+  const seeds = [
+    [0.15,0.5],[0.22,0.2],[0.28,0.7],[0.35,0.35],[0.40,0.6],
+    [0.48,0.15],[0.52,0.8],[0.58,0.4],[0.63,0.2],[0.68,0.65],
+    [0.73,0.3],[0.78,0.5],[0.83,0.1],[0.88,0.45],[0.93,0.6],
+  ];
+  const phase = wavePhaseOff * 0.008;
+
+  seeds.forEach(([fx, fy], i) => {
+    const bx   = fx * w;
+    const ffx  = bx * 0.005;
+    const s1   = Math.sin(ffx - phase) * h * (0.04 + waveEnergy * 0.42);
+    const s2   = Math.sin(ffx * 2.1 - phase * 1.5) * h * (0.04 + waveEnergy * 0.42) * 0.55;
+    const cy   = baseY - s1 - s2 - fy * h * 0.18 * (0.2 + waveEnergy * 0.8);
+    const r    = (1.5 + waveEnergy * 5) * (0.5 + Math.sin(t * 1.1 + i) * 0.5);
+    const alpha= (0.3 + waveEnergy * 0.5) * (0.6 + Math.sin(t * 0.8 + i * 1.4) * 0.4);
+    const hex  = Math.round(Math.min(alpha, 1) * 255).toString(16).padStart(2,'0');
+    ctx.beginPath();
+    ctx.arc(bx + Math.sin(t * 0.5 + i) * 6 * waveEnergy, cy, Math.max(0.5, r), 0, Math.PI*2);
+    ctx.fillStyle = foamColor + hex;
+    ctx.fill();
+  });
+}
+
+
+// ─── Creatures & water drops ───────────────────────────────────────────────────
+const creatures = [];
+let lastSpawnT  = 0;
+
+const CREATURE_TYPES = ['fish','fish','crab','starfish','octopus'];
+
+function waveYAt(bx, w, h, baseY) {
+  const phase = wavePhaseOff * 0.008;
+  const ffx   = bx * 0.008;
+  return baseY
+    - Math.sin(ffx - phase)       * h * (0.04 + waveEnergy * 0.42)
+    - Math.sin(ffx*2.1 - phase*1.5) * h * (0.04 + waveEnergy * 0.42) * 0.55;
+}
+
+function spawnOne(t, w, h, baseY) {
+  const type  = CREATURE_TYPES[Math.floor(Math.random() * CREATURE_TYPES.length)];
+  const fx    = 0.08 + Math.random() * 0.84;
+  const bx    = fx * w;
+  const surfY = waveYAt(bx, w, h, baseY);
+
+  const speed   = 160 + Math.random() * 140 + waveEnergy * 200;
+  const angle = -(Math.PI * 0.3 + Math.random() * Math.PI * 0.4);
+  const spin  = (Math.random() - 0.5) * 10;
+  const small = Math.random() < 0.8;
+  const scale = small
+    ? 0.18 + Math.random() * 0.22   // 80%: tiny
+    : 0.55 + Math.random() * 0.65;  // 20%: big
+
+  creatures.push({
+    type, x: bx, y: surfY,
+    vx: Math.cos(angle) * speed * (Math.random() < 0.5 ? 1 : -1),
+    vy: Math.sin(angle) * speed,
+    rot: Math.random() * Math.PI * 2,
+    spin, scale, life: 0,
+  });
+}
+
+function maybeSpawnCreature(t, w, h, baseY) {
+  const interval = Math.max(0.18, 0.9 - waveEnergy * 0.72);
+  if (t - lastSpawnT < interval) return;
+  lastSpawnT = t;
+  // Spawn a cluster: more creatures at higher energy
+  const count = 1 + Math.floor(waveEnergy * 5) + (Math.random() < waveEnergy ? 2 : 0);
+  for (let i = 0; i < count; i++) spawnOne(t, w, h, baseY);
+}
+
+function updateCreatures(dt, h) {
+  const GRAVITY = 500;
+  for (let i = creatures.length - 1; i >= 0; i--) {
+    const c = creatures[i];
+    c.vy  += GRAVITY * dt;
+    c.x   += c.vx * dt;
+    c.y   += c.vy * dt;
+    c.rot += c.spin * dt;
+    c.life += dt;
+    if (c.y > h + 60 || c.life > 3.5) creatures.splice(i, 1);
+  }
+}
+
+function drawCreatures(t) {
+  creatures.forEach(c => drawOne(c, t));
+}
+
+function drawOne(c, t) {
+  const alpha = Math.min(1, Math.min(c.life * 5, (3.5 - c.life) * 2));
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(c.x, c.y);
+  ctx.rotate(c.rot);
+  ctx.scale(c.scale, c.scale);
+  switch(c.type) {
+    case 'fish':     drawFish(t);     break;
+    case 'crab':     drawCrab(t);     break;
+    case 'starfish': drawStarfish(t); break;
+    case 'octopus':  drawOctopus(t);  break;
+    case 'drop':     drawDrop();      break;
+  }
+  ctx.restore();
+}
+
+// ── Fish ───────────────────────────────────────────────────────────────────────
+function drawFish(t) {
+  // Body gradient
+  const bg = ctx.createRadialGradient(-2, -2, 1, 0, 0, 15);
+  bg.addColorStop(0, '#ffcc44');
+  bg.addColorStop(1, '#e07010');
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 15, 8, 0, 0, Math.PI*2);
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.strokeStyle = '#a04000';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // Tail
+  ctx.beginPath();
+  ctx.moveTo(-13, 0); ctx.lineTo(-23, -9); ctx.lineTo(-20, 0); ctx.lineTo(-23, 9);
+  ctx.closePath();
+  ctx.fillStyle = '#e07010'; ctx.fill();
+  ctx.strokeStyle = '#a04000'; ctx.stroke();
+  // Dorsal fin
+  ctx.beginPath();
+  ctx.moveTo(-2, -8); ctx.quadraticCurveTo(3, -17, 9, -8);
+  ctx.fillStyle = 'rgba(255,180,40,0.7)'; ctx.fill();
+  // Scales hint
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(-4 + i*5, 1, 3, Math.PI*0.8, Math.PI*2.2);
+    ctx.strokeStyle = 'rgba(255,220,80,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  // Eye
+  ctx.beginPath(); ctx.arc(8, -2, 3, 0, Math.PI*2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.beginPath(); ctx.arc(8.5, -2, 1.5, 0, Math.PI*2);
+  ctx.fillStyle = '#222'; ctx.fill();
+  ctx.beginPath(); ctx.arc(9, -2.5, 0.6, 0, Math.PI*2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+  // Smile
+  ctx.beginPath();
+  ctx.arc(11, 1, 3, 0.2, Math.PI*0.8);
+  ctx.strokeStyle = '#a04000'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+// ── Crab ───────────────────────────────────────────────────────────────────────
+function drawCrab(t) {
+  // Shell body
+  const bg = ctx.createRadialGradient(-2,-2,1, 0,0,13);
+  bg.addColorStop(0,'#ff6040'); bg.addColorStop(1,'#c01800');
+  ctx.beginPath(); ctx.ellipse(0, 1, 13, 10, 0, 0, Math.PI*2);
+  ctx.fillStyle = bg; ctx.fill();
+  ctx.strokeStyle = '#800000'; ctx.lineWidth = 1.2; ctx.stroke();
+  // Shell pattern
+  ctx.beginPath(); ctx.ellipse(0, 1, 8, 6, 0, 0, Math.PI*2);
+  ctx.strokeStyle = 'rgba(255,120,80,0.4)'; ctx.lineWidth = 1; ctx.stroke();
+  // Legs (4 per side)
+  [-1,1].forEach(side => {
+    [0,1,2,3].forEach(i => {
+      const lx = (i-1.5)*5*side; const ly = 8;
+      ctx.beginPath();
+      ctx.moveTo(lx*0.7, ly-2);
+      ctx.quadraticCurveTo(lx*1.1 + side*4, ly+5, lx*1.3 + side*8, ly+10+i*2);
+      ctx.strokeStyle = '#c01800'; ctx.lineWidth = 2; ctx.stroke();
+    });
+  });
+  // Claws
+  [-1,1].forEach(side => {
+    ctx.beginPath();
+    ctx.moveTo(side*11, -2);
+    ctx.quadraticCurveTo(side*18, -5, side*20, -10);
+    ctx.strokeStyle = '#c01800'; ctx.lineWidth = 3; ctx.stroke();
+    const bg2 = ctx.createRadialGradient(side*20,-10,1,side*20,-10,7);
+    bg2.addColorStop(0,'#ff6040'); bg2.addColorStop(1,'#c01800');
+    ctx.beginPath(); ctx.ellipse(side*20, -10, 7, 5, side*0.3, 0, Math.PI*2);
+    ctx.fillStyle = bg2; ctx.fill();
+    ctx.strokeStyle = '#800000'; ctx.lineWidth = 1; ctx.stroke();
+    // Claw notch
+    ctx.beginPath();
+    ctx.moveTo(side*20-side*4, -8); ctx.lineTo(side*20-side*2, -13);
+    ctx.strokeStyle = '#800000'; ctx.lineWidth = 1.5; ctx.stroke();
+  });
+  // Eye stalks
+  [-5,5].forEach((ex,i) => {
+    ctx.beginPath(); ctx.moveTo(ex, -8); ctx.lineTo(ex+(i?2:-2), -16);
+    ctx.strokeStyle = '#c01800'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(ex+(i?2:-2), -16, 3.5, 0, Math.PI*2);
+    ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(ex+(i?3:-1), -16, 1.8, 0, Math.PI*2);
+    ctx.fillStyle = '#111'; ctx.fill();
+    ctx.beginPath(); ctx.arc(ex+(i?3.5:-0.5), -17, 0.7, 0, Math.PI*2);
+    ctx.fillStyle = '#fff'; ctx.fill();
+  });
+}
+
+// ── Starfish ───────────────────────────────────────────────────────────────────
+function drawStarfish(t) {
+  const arms = 5;
+  const R = 18, r = 7;
+  // Shadow
+  ctx.beginPath();
+  for (let i = 0; i < arms*2; i++) {
+    const ang = (i/arms/2)*Math.PI*2 - Math.PI/2;
+    const rad = i%2===0 ? R+1 : r+1;
+    i===0 ? ctx.moveTo(Math.cos(ang)*rad, Math.sin(ang)*rad+2)
+          : ctx.lineTo(Math.cos(ang)*rad, Math.sin(ang)*rad+2);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(180,60,0,0.3)'; ctx.fill();
+  // Body gradient
+  const bg = ctx.createRadialGradient(0,-2,1,0,0,R);
+  bg.addColorStop(0,'#ffcc44'); bg.addColorStop(0.5,'#ff8020'); bg.addColorStop(1,'#e04000');
+  ctx.beginPath();
+  for (let i = 0; i < arms*2; i++) {
+    const ang = (i/arms/2)*Math.PI*2 - Math.PI/2;
+    const rad = i%2===0 ? R : r;
+    i===0 ? ctx.moveTo(Math.cos(ang)*rad, Math.sin(ang)*rad)
+          : ctx.lineTo(Math.cos(ang)*rad, Math.sin(ang)*rad);
+  }
+  ctx.closePath(); ctx.fillStyle = bg; ctx.fill();
+  ctx.strokeStyle = '#c04000'; ctx.lineWidth = 1.2; ctx.stroke();
+  // Texture dots on each arm
+  for (let i = 0; i < arms; i++) {
+    const ang = (i/arms)*Math.PI*2 - Math.PI/2;
+    for (let d = 0.35; d < 0.9; d += 0.25) {
+      ctx.beginPath();
+      ctx.arc(Math.cos(ang)*R*d, Math.sin(ang)*R*d, 1.5, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,220,100,0.8)'; ctx.fill();
+    }
+  }
+  // Centre circle
+  const cc = ctx.createRadialGradient(0,0,1,0,0,6);
+  cc.addColorStop(0,'#ffe080'); cc.addColorStop(1,'#e05000');
+  ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2);
+  ctx.fillStyle = cc; ctx.fill();
+  ctx.strokeStyle = '#c04000'; ctx.lineWidth = 1; ctx.stroke();
+  // Eyes
+  [-2.5,2.5].forEach(ex => {
+    ctx.beginPath(); ctx.arc(ex,-1,1.4,0,Math.PI*2);
+    ctx.fillStyle='#111'; ctx.fill();
+    ctx.beginPath(); ctx.arc(ex+0.4,-1.4,0.5,0,Math.PI*2);
+    ctx.fillStyle='#fff'; ctx.fill();
+  });
+  // Smile
+  ctx.beginPath(); ctx.arc(0,1.5,2.2,0.2,Math.PI*0.85);
+  ctx.strokeStyle='#a03000'; ctx.lineWidth=1; ctx.stroke();
+}
+
+// ── Octopus ────────────────────────────────────────────────────────────────────
+function drawOctopus(t) {
+  const wobble = Math.sin(t * 6) * 1.5; // wiggling tentacles
+  // Tentacles (8) drawn first so head sits on top
+  for (let i = 0; i < 8; i++) {
+    const baseAng = (i/8)*Math.PI*2;
+    const tx0 = Math.cos(baseAng)*10, ty0 = Math.sin(baseAng)*10 + 6;
+    const tx1 = Math.cos(baseAng)*22 + Math.cos(baseAng+0.8)*8;
+    const ty1 = Math.sin(baseAng)*22 + Math.sin(baseAng+0.8)*8 + 8;
+    const tx2 = Math.cos(baseAng)*30 + wobble*Math.cos(baseAng+1.2);
+    const ty2 = Math.sin(baseAng)*30 + wobble*Math.sin(baseAng+1.2) + 6;
+    ctx.beginPath();
+    ctx.moveTo(tx0,ty0);
+    ctx.bezierCurveTo(tx1,ty1, tx2,ty2, tx2+Math.cos(baseAng+1.8)*5, ty2+Math.sin(baseAng+1.8)*5);
+    ctx.strokeStyle = '#b040c0'; ctx.lineWidth = 3.5; ctx.lineCap='round'; ctx.stroke();
+    // Sucker dots
+    ctx.beginPath(); ctx.arc((tx0+tx2)/2, (ty0+ty2)/2, 1.5, 0, Math.PI*2);
+    ctx.fillStyle='rgba(220,160,255,0.7)'; ctx.fill();
+  }
+  // Mantle (head)
+  const hg = ctx.createRadialGradient(-3,-8,2, 0,-4,18);
+  hg.addColorStop(0,'#e888f8'); hg.addColorStop(0.6,'#c040d0'); hg.addColorStop(1,'#7010a0');
+  ctx.beginPath();
+  ctx.ellipse(0, -6, 16, 20, 0, 0, Math.PI*2);
+  ctx.fillStyle = hg; ctx.fill();
+  ctx.strokeStyle = '#7010a0'; ctx.lineWidth = 1.2; ctx.stroke();
+  // Mantle spots
+  [[4,-14],[-5,-10],[6,-4],[-3,-18]].forEach(([sx,sy]) => {
+    ctx.beginPath(); ctx.arc(sx,sy,2.5,0,Math.PI*2);
+    ctx.fillStyle='rgba(240,180,255,0.5)'; ctx.fill();
+  });
+  // Eyes
+  [-5,5].forEach((ex,i) => {
+    ctx.beginPath(); ctx.arc(ex,-4,5,0,Math.PI*2);
+    ctx.fillStyle='#fff'; ctx.fill();
+    ctx.strokeStyle='#7010a0'; ctx.lineWidth=1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(ex+(i?1:-1),-4,3,0,Math.PI*2);
+    ctx.fillStyle='#220030'; ctx.fill();
+    ctx.beginPath(); ctx.arc(ex+(i?1.5:-0.5),-5,1,0,Math.PI*2);
+    ctx.fillStyle='#fff'; ctx.fill();
+  });
+  // Blush cheeks
+  [-7,7].forEach(ex => {
+    ctx.beginPath(); ctx.ellipse(ex,0,3.5,2,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,160,200,0.45)'; ctx.fill();
+  });
+  // Smile
+  ctx.beginPath(); ctx.arc(0,2,4,0.25,Math.PI*0.75);
+  ctx.strokeStyle='#7010a0'; ctx.lineWidth=1.2; ctx.stroke();
+}
+
+// ── Water drop ─────────────────────────────────────────────────────────────────
+function drawDrop() {
+  ctx.beginPath();
+  ctx.moveTo(0, -12);
+  ctx.bezierCurveTo(7, -6,  9,  0,  0, 9);
+  ctx.bezierCurveTo(-9, 0, -7, -6,  0, -12);
+  ctx.closePath();
+  const dg = ctx.createLinearGradient(-5,-10,5,8);
+  dg.addColorStop(0,'rgba(200,240,255,0.95)');
+  dg.addColorStop(0.4,'rgba(100,200,255,0.7)');
+  dg.addColorStop(1,'rgba(40,140,255,0.5)');
+  ctx.fillStyle = dg; ctx.fill();
+  ctx.strokeStyle='rgba(180,230,255,0.8)'; ctx.lineWidth=0.8; ctx.stroke();
+  // Highlight
+  ctx.beginPath(); ctx.ellipse(-2,-5,2,3.5,-0.4,0,Math.PI*2);
+  ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.fill();
+}
+
+
+function drawInputTrace(w, h) {
+  if (inputPoints.length < 2) return;
+  // Draw the breath path as a subtle glowing line
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth   = 2;
+  ctx.lineCap     = 'round';
+
+  for (let i = 1; i < inputPoints.length; i++) {
+    const p0 = inputPoints[i-1];
+    const p1 = inputPoints[i];
+    // x = time-based scroll, y = mapped from 0-1 input
+    const x0 = (p0.elapsed / 30000) * w * 8; // spread over time
+    const x1 = (p1.elapsed / 30000) * w * 8;
+    // clamp to visible window
+    const visW = w;
+    const lastT = inputPoints[inputPoints.length-1].elapsed;
+    const ox = visW - (lastT / 30000) * visW * 8;
+
+    ctx.beginPath();
+    ctx.moveTo(x0 + ox, p0.y01 * h);
+    ctx.lineTo(x1 + ox, p1.y01 * h);
+    ctx.strokeStyle = traceColor(p1.phase);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function traceColor(ph) {
+  if (ph==='in')    return '#60d0ff';
+  if (ph==='hold1') return '#ffd060';
+  if (ph==='out')   return '#80e090';
+  if (ph==='hold2') return '#ffa060';
+  return '#8090c0';
+}
+
+// ─── Animation loop ────────────────────────────────────────────────────────────
+const IDLE_SPEED   = 0.5;   // radians/sec — peaceful baseline roll
+const BREATH_BOOST = 2.2;   // extra radians/sec at full finger energy
+
+let lastAnimT = 0;
+
+function animate(ts) {
+  animFrame = requestAnimationFrame(animate);
+  const now = (ts || 0) / 1000;
+  const dt  = Math.min(now - lastAnimT, 0.05);
+  lastAnimT = now;
+  waveTime  = now;
+
+  const decay = Math.pow(0.88, dt * 60);
+  fingerSpeed *= decay;
+
+  const targetEnergy = Math.min(fingerSpeed / 120, 1.0);
+  waveEnergy += (targetEnergy - waveEnergy) * (1 - Math.pow(0.84, dt * 60));
+  waveEnergy  = Math.max(0.04, waveEnergy);
+
+  crestSharp += (Math.min(fingerSpeed / 60, 2.8) - crestSharp) * (1 - Math.pow(0.86, dt * 60));
+
+  // Always roll forward: idle pace + breath boost
+  const breathBoost = (waveDir >= 0 ? 1.0 : 0.4) * waveEnergy * BREATH_BOOST;
+  wavePhaseOff += (IDLE_SPEED + breathBoost) * dt;
+
+  const baseY = H() * 0.72;
+  maybeSpawnCreature(waveTime, W(), H(), baseY);
+  updateCreatures(dt, H());
+
+  drawScene(waveTime);
+}
+
+// ─── Phase / breath logic ──────────────────────────────────────────────────────
+const phaseLabel   = document.getElementById('phase-label');
+const timerDisplay = document.getElementById('timer-display');
+
+function setPhase(ph) {
+  if (ph === 'hold') {
+    ph = (currentPhase==='out'||currentPhase==='hold2') ? 'hold2' : 'hold1';
+  }
+  if (ph === currentPhase) return;
+
+  const now = Date.now();
+  if (currentPhase && phaseStart) {
+    const dur = (now - phaseStart) / 1000;
+    if (currentPhase==='in')    currentCycle.in    += dur;
+    if (currentPhase==='hold1') currentCycle.hold1 += dur;
+    if (currentPhase==='out')   currentCycle.out   += dur;
+    if (currentPhase==='hold2') currentCycle.hold2 += dur;
+
+    if (ph==='in' && currentCycle.in>0 &&
+        (currentPhase==='out'||currentPhase==='hold2')) {
+      cycles.push({...currentCycle});
+      currentCycle = {in:0,hold1:0,out:0,hold2:0};
+    }
+  }
+  currentPhase = ph;
+  phaseStart   = now;
+
+  const labels = {in:'↑ INHALE', hold1:'◆ HOLD', out:'↓ EXHALE', hold2:'◆ HOLD'};
+  const colors = {in:'#4fc3f7', hold1:'#ffd54f', out:'#81c784', hold2:'#ff8a65'};
+  phaseLabel.textContent  = labels[ph] || 'READY';
+  phaseLabel.style.background = colors[ph]+'22';
+  phaseLabel.style.color      = colors[ph];
+}
+
+function updateTimer() {
+  if (!recording || !phaseStart || !currentPhase) return;
+  const sec = ((Date.now()-phaseStart)/1000).toFixed(1);
+  const labels = {in:'INHALE', hold1:'HOLD', out:'EXHALE', hold2:'HOLD'};
+  timerDisplay.textContent = (labels[currentPhase]||'') + ' ' + sec + 's';
+}
+
+// ─── Input handling ────────────────────────────────────────────────────────────
+function recordInput(clientY, phase) {
+  if (!recording) return;
+  const rect = wrap.getBoundingClientRect();
+  const y01  = (clientY - rect.top) / rect.height;
+  inputPoints.push({ elapsed: Date.now()-inputStartTime, y01, phase });
+  // keep last 2000 points
+  if (inputPoints.length > 2000) inputPoints.shift();
+}
+
+// Touch
+canvas.addEventListener('touchstart', onTouchStart, {passive:false});
+canvas.addEventListener('touchmove',  onTouchMove,  {passive:false});
+canvas.addEventListener('touchend',   onTouchEnd,   {passive:false});
+
+function onTouchStart(e) {
+  e.preventDefault();
+  if (!recording) return;
+  const now = Date.now();
+  if (now - lastTap < 350) { stopRecording(); return; }
+  lastTap = now;
+  const t = e.touches[0];
+  lastTouchY    = t.clientY;
+  lastTouchTime = now;
+  moveDirBuffer = [];
+  clearTimeout(holdTimer);
+  setPhase('hold1');
+  recordInput(t.clientY, currentPhase);
+}
+
+function onTouchMove(e) {
+  e.preventDefault();
+  if (!recording || lastTouchY===null) return;
+  const t   = e.touches[0];
+  const now = Date.now();
+  const dy  = lastTouchY - t.clientY;
+  const dt  = lastTouchTime ? (now-lastTouchTime) : 16;
+  const speed = Math.abs(dy) / Math.max(dt,1) * 100;
+
+  lastTouchY    = t.clientY;
+  lastTouchTime = now;
+
+  moveDirBuffer.push(dy);
+  if (moveDirBuffer.length > 8) moveDirBuffer.shift();
+  const avgDy = moveDirBuffer.reduce((a,b)=>a+b,0) / moveDirBuffer.length;
+
+  // Feed wave: speed drives energy, direction drives phase scroll
+  fingerSpeed = fingerSpeed * 0.5 + speed * 0.5;
+  waveDir = dy > 0 ? 1 : (dy < 0 ? -1 : waveDir);
+
+  if (speed > HOLD_RESET_THR) {
+    clearTimeout(holdTimer); holdTimer=null;
+    if (Math.abs(avgDy) > 0.5) setPhase(avgDy>0?'in':'out');
+  } else {
+    if (!holdTimer)
+      holdTimer = setTimeout(()=>{ setPhase('hold'); holdTimer=null; }, HOLD_DELAY_MS);
+  }
+  recordInput(t.clientY, currentPhase);
+}
+
+function onTouchEnd(e) {
+  e.preventDefault();
+  if (!recording) return;
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(()=>{ setPhase('hold'); holdTimer=null; }, HOLD_DELAY_MS);
+}
+
+// Mouse (free move)
+canvas.addEventListener('mousemove', onMouseMove);
+canvas.addEventListener('mouseleave', ()=>{ lastMouseY=null; mouseDirBuffer=[]; });
+canvas.addEventListener('dblclick',  ()=>{ if(recording) stopRecording(); });
+
+function onMouseMove(e) {
+  if (!recording) return;
+  const curY = e.clientY;
+  if (lastMouseY===null) { lastMouseY=curY; recordInput(curY, currentPhase); return; }
+
+  const dy = lastMouseY - curY;
+  lastMouseY = curY;
+  mouseDirBuffer.push(dy);
+  if (mouseDirBuffer.length>6) mouseDirBuffer.shift();
+  const avgDy = mouseDirBuffer.reduce((a,b)=>a+b,0)/mouseDirBuffer.length;
+
+  const absDy = Math.abs(dy);
+  fingerSpeed = fingerSpeed * 0.5 + absDy * 3;  // scale up since mouse events are frequent
+  if (dy !== 0) waveDir = dy > 0 ? 1 : -1;
+
+  if (Math.abs(avgDy) > MOVE_THRESHOLD) setPhase(avgDy>0?'in':'out');
+  recordInput(curY, currentPhase);
+}
+
+// ─── Session control ───────────────────────────────────────────────────────────
+const overlay    = document.getElementById('overlay');
+const startBtn   = document.getElementById('start-btn');
+const statsPanel = document.getElementById('stats-panel');
+const restartBtn = document.getElementById('restart-btn');
+
+function startRecording() {
+  recording=true; cycles=[]; inputPoints=[];
+  currentCycle={in:0,hold1:0,out:0,hold2:0};
+  currentPhase=null; phaseStart=null;
+  moveDirBuffer=[]; lastTap=0; inputStartTime=Date.now();
+  waveEnergy=0.02; waveDir=0; wavePhaseOff=0; fingerSpeed=0; crestSharp=0;
+  creatures.length=0; lastSpawnT=0;
+  overlay.style.opacity='0';
+  overlay.style.pointerEvents='none';
+  timerDisplay.textContent='';
+  phaseLabel.textContent='MOVE TO BREATHE';
+  phaseLabel.style.background='#1a2540';
+  phaseLabel.style.color='#a0c4ff';
+
+  clearInterval(timerInterval);
+  timerInterval = setInterval(updateTimer, 100);
+
+  if (!animFrame) animate(0);
+}
+
+function stopRecording() {
+  recording=false;
+  clearInterval(timerInterval);
+  clearTimeout(holdTimer);
+
+  const now=Date.now();
+  if (currentPhase && phaseStart) {
+    const dur=(now-phaseStart)/1000;
+    if (currentPhase==='in')    currentCycle.in    +=dur;
+    if (currentPhase==='hold1') currentCycle.hold1 +=dur;
+    if (currentPhase==='out')   currentCycle.out   +=dur;
+    if (currentPhase==='hold2') currentCycle.hold2 +=dur;
+  }
+  if (currentCycle.in>0||currentCycle.out>0) cycles.push({...currentCycle});
+
+  showStats();
+}
+
+function showStats() {
+  if (!cycles.length) { resetToStart(); return; }
+  const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
+  const fmt = n => n>0 ? n.toFixed(1) : '—';
+  const ins    = cycles.map(c=>c.in).filter(v=>v>0);
+  const holds1 = cycles.map(c=>c.hold1).filter(v=>v>0);
+  const outs   = cycles.map(c=>c.out).filter(v=>v>0);
+  const holds2 = cycles.map(c=>c.hold2).filter(v=>v>0);
+
+  document.getElementById('stats-grid').innerHTML=`
+    <div class="stat-card">
+      <div class="stat-value in-color">${fmt(avg(ins))}<span style="font-size:12px">s</span></div>
+      <div class="stat-label">Avg Inhale</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value hold-color">${fmt(avg(holds1))}<span style="font-size:12px">s</span></div>
+      <div class="stat-label">Hold After In</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value out-color">${fmt(avg(outs))}<span style="font-size:12px">s</span></div>
+      <div class="stat-label">Avg Exhale</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color:#ff8a65">${fmt(avg(holds2))}<span style="font-size:12px">s</span></div>
+      <div class="stat-label">Hold After Out</div>
+    </div>
+    <div class="stat-card" style="grid-column:1/3">
+      <div class="stat-value" style="color:#a0c4ff">${cycles.length}<span style="font-size:13px;font-weight:500"> cycles</span></div>
+      <div class="stat-label">Total Breath Cycles</div>
+    </div>
+  `;
+  document.getElementById('cycles-body').innerHTML=cycles.map((c,i)=>`
+    <tr>
+      <td style="color:#4a6a90">${i+1}</td>
+      <td class="in-color">${fmt(c.in)}</td>
+      <td class="hold-color">${fmt(c.hold1)}</td>
+      <td class="out-color">${fmt(c.out)}</td>
+      <td style="color:#ff8a65">${fmt(c.hold2)}</td>
+    </tr>
+  `).join('');
+
+  statsPanel.classList.add('show');
+}
+
+function resetToStart() {
+  statsPanel.classList.remove('show');
+  cycles=[]; inputPoints=[]; currentCycle={in:0,hold1:0,out:0,hold2:0};
+  currentPhase=null; phaseStart=null;
+  waveEnergy=0.02; waveDir=0; wavePhaseOff=0; fingerSpeed=0; crestSharp=0;
+  creatures.length=0; lastSpawnT=0;
+  overlay.style.opacity='1'; overlay.style.pointerEvents='all';
+  phaseLabel.textContent='READY';
+  phaseLabel.style.background='#1a2540'; phaseLabel.style.color='#e0eaff';
+  timerDisplay.textContent='';
+}
+
+startBtn.addEventListener('click',    startRecording);
+startBtn.addEventListener('touchend', e=>{ e.preventDefault(); startRecording(); });
+restartBtn.addEventListener('click',    resetToStart);
+restartBtn.addEventListener('touchend', e=>{ e.preventDefault(); resetToStart(); });
+
+// Start animation immediately for the idle wave on start screen
+lastAnimT = performance.now() / 1000;
+animate(performance.now());
+</script>
+</body>
+</html>
